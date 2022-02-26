@@ -5,9 +5,10 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <errno.h>
+#include <string.h>
 
-#define PORT 9876
-#define IP "127.0.0.1"
+#define PORT 12345
 
 void run_server_mode();
 void run_client_mode();
@@ -53,28 +54,37 @@ void run_server_mode()
   const int server_socket = socket(AF_INET, SOCK_STREAM, 0);
   if (server_socket == -1)
   {
-    printf("Server socket can't be created.\n");
+    printf("Server socket can't be created: %s\n", strerror(errno));
     return;
   }
   printf("Server socket has been created.\n");
+
+  // Try to set special socket options.
+  const int option = 1;
+  if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) == -1)
+  {
+    printf("Server socket can't reuse address: %s\n", strerror(errno));
+    close(server_socket);
+    return;
+  }
 
   // Try to bind server socket to address.
   struct sockaddr_in server_address;
   server_address.sin_family = AF_INET;
   server_address.sin_port = htons(PORT);
-  server_address.sin_addr.s_addr = INADDR_ANY;
+  server_address.sin_addr.s_addr = htonl(INADDR_ANY);
   if (bind(server_socket, (struct sockaddr*)&server_address, sizeof(server_address)) != 0)
   {
-    printf("Server socket can't be bound.\n");
+    printf("Server socket can't be bound: %s\n", strerror(errno));
     close(server_socket);
     return;
   }
   printf("Server socket has been bound.\n");
 
   // Try to listen server socket.
-  if (listen(server_socket, 1) != 0)
+  if (listen(server_socket, 10) != 0)
   {
-    printf("Server socket can't be listened.\n");
+    printf("Server socket can't be listened: %s\n", strerror(errno));
     close(server_socket);
     return;
   }
@@ -86,7 +96,7 @@ void run_server_mode()
     const int client_socket = accept(server_socket, NULL, 0);
     if (client_socket == -1)
     {
-      printf("Client socket can't be accepted.\n");
+      printf("Client socket can't be accepted: %s\n", strerror(errno));
       continue;
     }
     printf("Client socket has been accepted.\n");
@@ -108,7 +118,7 @@ void run_server_mode()
 
       if (size == -1)
       {
-        printf("Client socket. Error has occurred.");
+        printf("Client socket. Error has occurred: %s", strerror(errno));
         close(client_socket);
         break;
       }
@@ -144,29 +154,30 @@ void run_client_mode()
   const int client_socket = socket(AF_INET, SOCK_STREAM, 0);
   if (client_socket == -1)
   {
-    printf("Client socket can't be created.\n");
+    printf("Client socket can't be created: %s\n", strerror(errno));
     return;
   }
   printf("Client socket has been created.\n");
 
-  // Try to bind client socket to address.
+  // Try to set special socket options.
+  const int option = 1;
+  if (setsockopt(client_socket, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) == -1)
+  {
+    printf("Client socket can't reuse address: %s\n", strerror(errno));
+    close(client_socket);
+    return;
+  }
+
+  // Try to connect client socket to address.
   struct sockaddr_in client_address;
   client_address.sin_family = AF_INET;
   client_address.sin_port = htons(PORT);
   // We don't really check result of this call.
-  inet_aton(IP, (struct in_addr*)&client_address.sin_addr.s_addr);
-  if (bind(client_socket, (struct sockaddr*)&client_address, sizeof(client_address)) != 0)
+  //inet_aton(IP, (struct in_addr*)&client_address.sin_addr.s_addr);
+  client_address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  if (connect(client_socket, (struct sockaddr*)&client_address, sizeof(client_address)) == -1)
   {
-    printf("Client socket can't be bound.\n");
-    close(client_socket);
-    return;
-  }
-  printf("Client socket has been bound.\n");
-
-  // Try to connect client socket to server.
-  if (connect(client_socket, &client_address, sizeof(client_address)) == -1)
-  {
-    printf("CLient socket can't be connected.\n");
+    printf("Client socket can't be connected: %s\n", strerror(errno));
     close(client_socket);
     return;
   }
@@ -178,16 +189,23 @@ void run_client_mode()
   // Fill the buffer with data.
   for (size_t i = 0; i < sizeof(buffer); ++i)
   {
-    buffer[i] = i;
+    buffer[i] = 'f';
   }
+
   // Send data.
   while (total < sizeof(buffer))
   {
     const int size = send(client_socket, buffer + total, sizeof(buffer) - total, 0);
     
+    if (size == 0)
+    {
+      printf("Connection has been closed: %s\n", strerror(errno));
+      break;
+    }
+
     if (size == -1)
     {
-      printf("Error has occured.\n");
+      printf("Error has occured: %s\n", strerror(errno));
       close(client_socket);
       break;
     }
@@ -196,5 +214,5 @@ void run_client_mode()
   }
 
   close(client_socket);
-  printf("Client mode ends.");
+  printf("Client mode ends.\n");
 }
