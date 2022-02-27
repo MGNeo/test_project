@@ -107,7 +107,7 @@ void run_server_mode()
     
     while (total < sizeof(buffer))
     {
-      const int size = recv(client_socket, buffer, sizeof(buffer), 0);
+      const int size = recv(client_socket, buffer + total, sizeof(buffer) - total, 0);
     
       if (size == 0)
       {
@@ -123,6 +123,15 @@ void run_server_mode()
         break;
       }
 
+      printf("%i bytes have been recieved.\n", size);
+
+      // Print gotten data.
+      for (int i = total; i < total + size; ++i)
+      {
+        printf("%c", buffer[i]);
+      }
+      printf("\n");
+      
       // We don't really check possible integer overflow.
       total += size;
       if (total > sizeof(buffer))
@@ -130,12 +139,6 @@ void run_server_mode()
         printf("Client socket. Size of gotten data is too big.\n");
         close(client_socket);
         break;
-      }
-
-      // Print gotten data.
-      for (size_t i = 0; i < size; ++i)
-      {
-        printf("%c", buffer[i]);
       }
     }
 
@@ -189,7 +192,7 @@ void run_client_mode()
   // Fill the buffer with data.
   for (size_t i = 0; i < sizeof(buffer); ++i)
   {
-    buffer[i] = 'f';
+    buffer[i] = i;
   }
 
   // Send data.
@@ -210,6 +213,7 @@ void run_client_mode()
       break;
     }
 
+    printf("%i bytes have been sent.\n", size);
     total += size;
   }
 
