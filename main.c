@@ -7,11 +7,72 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <string.h>
+#include <pthread.h>
+#include <stdarg.h>
 
 #define PORT 12345
 
+pthread_mutexattr_t print_mutexattr;
+pthread_mutex_t print_mutex;
+
+void global_init()
+{
+  if (pthread_mutexattr_init(&print_mutexattr) == -1)
+  {
+    printf("global_init(), pthread_mutexattr_init() has failed: %s\n", strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+  if (pthread_mutex_init(&print_mutex, &print_mutexattr) == -1)
+  {
+    printf("global_init(), pthread_mutex_init() has failed: %s\n", strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+}
+
+void thread_safe_printf(const char*const str, ...)
+{
+  va_list args;
+  va_start(args, str);
+
+  if (pthread_mutex_lock(&print_mutex) == -1)
+  {
+    printf("thread_safe_printf(), pthread_mutex_lock() has failed: %s\n", strerror(errno));
+    abort();
+  }
+
+  vprintf(str, args);
+  
+  if (pthread_mutex_unlock(&print_mutex) == -1)
+  {
+    printf("thread_safe_printf(), pthread_mutex_unlock() has failed: %s\n", strerror(errno));
+    abort();
+  }
+
+  va_end(args);
+}
+
 void run_server_mode();
 void run_client_mode();
+
+void* main_server_thread(void* param)
+{
+  return NULL;
+}
+
+void* side_server_thread(void* param)
+{
+  return NULL;
+}
+
+void* main_client_thread(void* param)
+{
+  return NULL;
+}
+
+void* size_client_thread(void* param)
+{
+  return NULL;
+}
 
 int main(int argc, char** argv)
 {
