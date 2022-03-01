@@ -9,24 +9,38 @@
 #include <string.h>
 #include <pthread.h>
 #include <stdarg.h>
+#include <stdatomic.h>
+#include <stdbool.h>
 
 #define PORT 12345
 
 pthread_mutexattr_t print_mutexattr;
 pthread_mutex_t print_mutex;
 
+// These are handles for main server and client threads.
+pthread_t main_server_thread_handle;
+pthread_t main_client_thread_handle;
+
+atomic_bool stop_flag;
+
 void global_init()
 {
+  // We try to initialize attribute for thread safe printf mutex.
   if (pthread_mutexattr_init(&print_mutexattr) == -1)
   {
     printf("global_init(), pthread_mutexattr_init() has failed: %s\n", strerror(errno));
     exit(EXIT_FAILURE);
   }
+
+  // We try to initialize mutex for thread safe printf.
   if (pthread_mutex_init(&print_mutex, &print_mutexattr) == -1)
   {
     printf("global_init(), pthread_mutex_init() has failed: %s\n", strerror(errno));
     exit(EXIT_FAILURE);
   }
+
+  // We initialize stop flag.
+  atomic_init(&stop_flag, false);
 }
 
 void thread_safe_printf(const char*const str, ...)
@@ -56,54 +70,105 @@ void run_client_mode();
 
 void* main_server_thread(void* param)
 {
+  thread_safe_printf("main_server_thread() begins.\n");
+
+  thread_safe_printf("main_server_thread() ends.\n");
+
   return NULL;
 }
 
 void* side_server_thread(void* param)
 {
+  thread_safe_printf("side_server_thread() begins.\n");
+  
+  // We do our work until stop flag is not true.
+  while(atomic_load(&stop_flag) != true)
+  {
+    // ...
+  }
+
+  thread_safe_printf("side_server_thread() ends.\n");
+  
   return NULL;
 }
 
 void* main_client_thread(void* param)
 {
+  thread_safe_printf("main_client_thread() begins.\n");
+  
+  // We do our work until stop flag is not true.
+  while (atomic_load(&stop_flag) != true)
+  {
+    // ...
+  }
+  
+  thread_safe_printf("main_client_thread() ends.\n");
+  
   return NULL;
 }
 
 void* size_client_thread(void* param)
 {
+  thread_safe_printf("side_client_thread() begins.\n");
+  
+  thread_safe_printf("side_client_thread() ends.\n");
+  
   return NULL;
 }
 
 int main(int argc, char** argv)
 {
-  while (1)
+  printf("main() begins.\n");
+  
+  global_init();
+  
+  // We try to run main server thread.
   {
-    printf("Choose mode:\n");
-    printf("s - server mode;\n");
-    printf("c - client mode.\n");
-
-    const char input = getchar();
-
-    switch (input)
+    const int result = pthread_create(&main_server_thread_handle, NULL, main_server_thread, NULL);
+    if (result != 0)
     {
-      case ('s'):
-      {
-        run_server_mode();
-        break;
-      }
-      case ('c'):
-      {
-        run_client_mode();
-        break;
-      }
-      default:
-      {
-        printf("Wrong mode, try again.\n");
-        break;
-      }
+      thread_safe_printf("main(), pthread_create() has failed for main_server_thread_handle: %i\n", result);
+      abort();
     }
   }
+  
+  // We try to run main client thread.
+  {
+    const int result = pthread_create(&main_client_thread_handle, NULL, main_client_thread, NULL);
+    if (result != 0)
+    {
+      thread_safe_printf("main(), pthread_create() has failed for main_client_thread_handle: %i\n", result);
+      abort();
+    }
+  }
+  
+  // We allow main threads to work 8 hours.
+  sleep(28800);
+  
+  // We send a signal to stop all working.
+  // ...
 
+  // We try to join main server thread.
+  {
+    const int result = pthread_join(main_server_thread_handle, NULL);
+    if (result != 0)
+    {
+      thread_safe_printf("main(), pthread_join() has failed for main_server_thread_handle: %i\n", result);
+      abort();
+    }
+  }
+  
+  {
+    const int result = pthread_join(main_client_thread_handle, NULL);
+    if (result != 0)
+    {
+      thread_safe_printf("main(), pthread_joid() has failed for main_client_thread_handle: %i\n", result);
+      abort();
+    }
+  }
+  
+  thread_safe_printf("main() ends.\n");
+  
   return 0;
 }
 
