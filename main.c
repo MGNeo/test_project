@@ -9,10 +9,19 @@
 #include <string.h>
 #include <pthread.h>
 #include <stdarg.h>
-#include <stdatomic.h>
-#include <stdbool.h>
+
+// TODO:
+// 1. Aplication has two main threads - server and client ones.
+// 2. Main server thread accepts clients and passes each of them to personal side server thread for processing.
+// 3. Main client thread connects clients and passes each of them to a personal side client thread for processing.
+// 4. There are 1000 connections.
+// 5. Each connection is sending 1000 bytes at first from client to server and then from server to client again, the data must not be different.
+// 6. All sockets use block mode.
+// 7. All data is sent by random sized chunks.
 
 #define PORT 12345
+#define CLIENT_COUNT 1000
+#define DATA_SIZE 1000
 
 pthread_mutexattr_t print_mutexattr;
 pthread_mutex_t print_mutex;
@@ -20,8 +29,6 @@ pthread_mutex_t print_mutex;
 // These are handles for main server and client threads.
 pthread_t main_server_thread_handle;
 pthread_t main_client_thread_handle;
-
-atomic_bool stop_flag;
 
 void global_init()
 {
@@ -38,9 +45,27 @@ void global_init()
     printf("global_init(), pthread_mutex_init() has failed: %s\n", strerror(errno));
     exit(EXIT_FAILURE);
   }
+}
 
-  // We initialize stop flag.
-  atomic_init(&stop_flag, false);
+void global_fin()
+{
+  printf("global_fin() begins.\n");
+
+  // We try to destroy mutex for thread safe printf.
+  if (pthread_mutex_destroy(&print_mutex) == -1)
+  {
+    printf("global_fin(), pthread_mutex_destroy() has failed: %s\n", strerror(errno));
+    abort();
+  }
+
+  // We try to destroy mutex attribute for thread safe printf.
+  if (pthread_mutexattr_destroy(&print_mutexattr) == -1)
+  {
+    printf("global_fin(), pthread_mutexattr_destroy() has failed: %s\n", strerror(errno));
+    abort();
+  }
+
+  printf("global_fin() ends.\n");
 }
 
 void thread_safe_printf(const char*const str, ...)
@@ -71,7 +96,69 @@ void run_client_mode();
 void* main_server_thread(void* param)
 {
   thread_safe_printf("main_server_thread() begins.\n");
+  
+  // We try to create server socket.
+  const int server_socket = socket(AF_INET, SOCK_STREAM, 0);
+  if (server_socket == -1)
+  {
+    thread_safe_printf("main_server_thread(), server socket can't be created: %s\n", strerror(errno));
+    abort();
+  }
+  printf("Server socket has been created.\n");
+  
+  // We try to set special socket options.
+  {
+    const int option = 1;
+    if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) == -1)
+    {
+      thread_safe_printf("main_server_thread(), server socket can't reuse address: %s\n", strerror(errno));
+      close(server_socket);
+      abort();
+    }
+    thread_safe_printf("main_server_thread(), server socket has reused address.\n");
+  }
 
+  // We try to bind server socket to address.
+  {
+    struct sockaddr_in server_address;
+    server_address.sin_family = AF_INET;
+    server_address.sin_port = htons(PORT);
+    server_address.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(server_socket, (struct sockaddr*)&server_address, sizeof(server_address)) != 0)
+    {
+      thread_safe_printf("main_server_thread(), server socket can't be bound: %s\n", strerror(errno));
+      close(server_socket);
+      abort();
+    }
+    thread_safe_printf("main_server_thread(), server socket has been bound.\n");
+  }
+  
+  // We try to listen server socket.
+  if (listen(server_socket, 1) != 0)
+  {
+    thread_safe_printf("main_server_thread(), server socket can't be listened: %s\n", strerror(errno));
+    close(server_socket);
+    abort();
+  }
+  thread_safe_printf("main_server_thread(), server socket has been listened.\n");
+
+  // We accept all clients.
+  for (size_t i = 0; i < CLIENT_COUNT; ++i)
+  {
+    const int client_socket = accept(server_socket, NULL, 0);
+    if (client_socket == -1)
+    {
+      thread_safe_printf("main_server_thread(), client socket cant be accepted: %s\n", strerror(errno));
+      continue;
+    }
+    thread_safe_printf("main_server_thread(), client socket has been accepted.\n");
+    
+    // We try to start side server thread.
+    {
+      //const int result = pthread_create(&side_server_thread_handle, NULL, side_server_thread, NULL);
+    }
+  }
+  
   thread_safe_printf("main_server_thread() ends.\n");
 
   return NULL;
@@ -81,11 +168,7 @@ void* side_server_thread(void* param)
 {
   thread_safe_printf("side_server_thread() begins.\n");
   
-  // We do our work until stop flag is not true.
-  while(atomic_load(&stop_flag) != true)
-  {
-    // ...
-  }
+  // ...
 
   thread_safe_printf("side_server_thread() ends.\n");
   
@@ -96,20 +179,18 @@ void* main_client_thread(void* param)
 {
   thread_safe_printf("main_client_thread() begins.\n");
   
-  // We do our work until stop flag is not true.
-  while (atomic_load(&stop_flag) != true)
-  {
-    // ...
-  }
+  // ...
   
   thread_safe_printf("main_client_thread() ends.\n");
   
   return NULL;
 }
 
-void* size_client_thread(void* param)
+void* side_client_thread(void* param)
 {
   thread_safe_printf("side_client_thread() begins.\n");
+  
+  // ...
   
   thread_safe_printf("side_client_thread() ends.\n");
   
@@ -162,7 +243,7 @@ int main(int argc, char** argv)
     const int result = pthread_join(main_client_thread_handle, NULL);
     if (result != 0)
     {
-      thread_safe_printf("main(), pthread_joid() has failed for main_client_thread_handle: %i\n", result);
+      thread_safe_printf("main(), pthread_join() has failed for main_client_thread_handle: %i\n", result);
       abort();
     }
   }
