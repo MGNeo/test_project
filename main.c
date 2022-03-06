@@ -113,7 +113,7 @@ void run_client_mode();
 void* main_server_thread(void* param)
 {
   thread_safe_printf("main_server_thread() begins.\n");
-  
+
   // We try to create server socket.
   const int server_socket = socket(AF_INET, SOCK_STREAM, 0);
   if (server_socket == -1)
@@ -191,6 +191,12 @@ void* side_server_thread(void* param)
 {
   thread_safe_printf("side_server_thread() begins.\n");
   
+  if (param == NULL)
+  {
+    thread_safe_printf("side_server_thread(), param == NULL.\n");
+    abort();
+  }
+
   // We convert param to socket.
   const int client_socket = *((int*)param);
 
@@ -222,16 +228,37 @@ void* side_server_thread(void* param)
     }
   }
   
-  // We send all data back to client.
+  // We send all data back to the client.
   {
     char buffer[DATA_SIZE];
     int total_sent_size = 0;
     
     while (total_sent_size < DATA_SIZE)
     {
-      const int random_size = rand() % DATA_SIZE + 1;
+      // We choose random size for sending and check if the size is not bigger than the remains.
+      int random_size = rand() % DATA_SIZE + 1;
+      if (total_sent_size + random_size > DATA_SIZE)
+      {
+        random_size = DATA_SIZE - total_sent_size;
+      }
       
+      const int size = send(client_socket, buffer + total_sent_size, random_size, 0);
       
+      if (size == -1)
+      {
+        thread_safe_printf("side_server_thread(), send() has failed: %s\n", strerror(errno));
+        abort();
+      }
+
+      if (size == 0)
+      {
+        thread_safe_printf("side_server_thread(), connection has been closed: %s\n", strerror(errno));
+        abort();
+      }
+      
+      thread_safe_printf("side_server_thread(), %i bytes have been sent.\n", size);
+      
+      total_sent_size += size;
     }
   }
   
@@ -254,6 +281,12 @@ void* main_client_thread(void* param)
 void* side_client_thread(void* param)
 {
   thread_safe_printf("side_client_thread() begins.\n");
+  
+  if (param == NULL)
+  {
+    thread_safe_printf("side_client_thread(), param == NULL.\n");
+    abort();
+  }
   
   // ...
   
