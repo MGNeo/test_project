@@ -129,7 +129,6 @@ void* main_server_thread(void* param)
     if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) == -1)
     {
       thread_safe_printf("main_server_thread(), server socket can't reuse address: %s\n", strerror(errno));
-      close(server_socket);
       abort();
     }
     thread_safe_printf("main_server_thread(), server socket has reused address.\n");
@@ -144,7 +143,6 @@ void* main_server_thread(void* param)
     if (bind(server_socket, (struct sockaddr*)&server_address, sizeof(server_address)) != 0)
     {
       thread_safe_printf("main_server_thread(), server socket can't be bound: %s\n", strerror(errno));
-      close(server_socket);
       abort();
     }
     thread_safe_printf("main_server_thread(), server socket has been bound.\n");
@@ -154,7 +152,6 @@ void* main_server_thread(void* param)
   if (listen(server_socket, CONNECTION_COUNT) != 0)
   {
     thread_safe_printf("main_server_thread(), server socket can't be listened: %s\n", strerror(errno));
-    close(server_socket);
     abort();
   }
   thread_safe_printf("main_server_thread(), server socket has been listened.\n");
@@ -271,8 +268,50 @@ void* main_client_thread(void* param)
 {
   thread_safe_printf("main_client_thread() begins.\n");
   
-  // ...
+  for (int i = 0; i < CONNECTION_COUNT; ++i)
+  {
+    // We try to create client socket.
+    side_client_sockets[i] = socket(AF_INET, SOCK_STREAM, 0);
+    if (side_client_sockets[i] == -1)
+    {
+      thread_safe_printf("main_client_thread(), client socket can't be created: %s\n", strerror(errno));
+      abort();
+    }
+    thread_safe_printf("main_client_thread(), client socket has been created.\n");
+
+    // We try to set special socket options.
+    const int option = 1;
+    if (setsockopt(side_client_sockets[i], SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) == -1)
+    {
+      thread_safe_printf("main_client_thread(), client socket can't reuse address: %s\n", strerror(errno));
+      abort();
+    }
+    thread_safe_printf("main_client_thread(), client socket has reused address.\n");
+
+    // We try to connect client socket to address.
+    struct sockaddr_in client_address;
+    client_address.sin_family = AF_INET;
+    client_address.sin_port = htons(PORT);
+    // We don't really check result of this call.
+    client_address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (connect(side_client_sockets[i], (struct sockaddr*)&client_address, sizeof(client_address)) == -1)
+    {
+      thread_safe_printf("main_client_thread(), client socket can't be connected: %s\n", strerror(errno));
+      abort();
+    }
+    thread_safe_printf("main_client_thread(), client socket has been connected.\n");
   
+    // We try to start side client thread.
+    {
+      const int result = pthread_create(&side_client_thread_handles[i], NULL, side_client_thread, &(side_client_sockets[i]));
+      if (result != 0)
+      {
+        thread_safe_printf("main_client_thread(), pthread_create() has failed for side_client_thread_handle[%i].\n, i");
+        abort();
+      }
+    }
+  }
+
   thread_safe_printf("main_client_thread() ends.\n");
   
   return NULL;
