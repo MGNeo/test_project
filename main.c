@@ -24,11 +24,13 @@ void* main_client_thread(void* param);
 void* side_server_thread(void* param);
 void* side_client_thread(void* param);
 
+void thread_safe_printf(const char*const str, ...);
+
 #define PORT 12345
-#define CONNECTION_COUNT 1000
+#define CONNECTION_COUNT 100
 #define DATA_SIZE 1000
 
-pthread_mutexattr_t print_mutexattr;
+// This is mutex for thread safe printf function.
 pthread_mutex_t print_mutex;
 
 // These are handles for main server and client threads.
@@ -43,25 +45,41 @@ int side_client_sockets[CONNECTION_COUNT];
 pthread_t side_server_thread_handles[CONNECTION_COUNT];
 pthread_t side_client_thread_handles[CONNECTION_COUNT];
 
+// This is conditional variable for to wake up main client thread after server socket has been bound.
+pthread_cond_t server_wake_up_cv = PTHREAD_COND_INITIALIZER;
+// This is mutex for working with server_wake_up_cv.
+pthread_mutex_t server_wake_up_mutex;
+
 void printf_mutex_init()
 {
   printf("printf_mutex_init() begins.\n");
 
-  // We try to initialize attribute for thread safe printf mutex.
-  if (pthread_mutexattr_init(&print_mutexattr) == -1)
-  {
-    printf("printf_mutex_init(), pthread_mutexattr_init() has failed: %s\n", strerror(errno));
-    exit(EXIT_FAILURE);
-  }
-
   // We try to initialize mutex for thread safe printf.
-  if (pthread_mutex_init(&print_mutex, &print_mutexattr) == -1)
+  if (pthread_mutex_init(&print_mutex, NULL) == -1)
   {
     printf("printf_mutex_init(), pthread_mutex_init() has failed: %s\n", strerror(errno));
     exit(EXIT_FAILURE);
   }
 
   printf("printf_mutex_init() ends.\n");
+}
+
+void server_wake_up_mutex_init()
+{
+  thread_safe_printf("server_wake_up_mutex_init() begins.\n");
+  
+  // ...
+  
+  thread_safe_printf("server_wake_up_mutex_init() ends.\n");
+}
+
+void server_wake_up_mutex_fin()
+{
+  thread_safe_printf("server_wake_up_mutex_fin() begins.\n");
+  
+  // ...
+  
+  thread_safe_printf("server_wake_up_mutex_fin() ends.\n");
 }
 
 void printf_mutex_fin()
@@ -72,13 +90,6 @@ void printf_mutex_fin()
   if (pthread_mutex_destroy(&print_mutex) == -1)
   {
     printf("printf_mutex_fin(), pthread_mutex_destroy() has failed: %s\n", strerror(errno));
-    abort();
-  }
-
-  // We try to destroy mutex attribute for thread safe printf.
-  if (pthread_mutexattr_destroy(&print_mutexattr) == -1)
-  {
-    printf("printf_mutex_fin(), pthread_mutexattr_destroy() has failed: %s\n", strerror(errno));
     abort();
   }
 
@@ -157,15 +168,15 @@ void* main_server_thread(void* param)
   thread_safe_printf("main_server_thread(), server socket has been listened.\n");
 
   // We accept all clients.
-  for (size_t i = 0; i < CONNECTION_COUNT; ++i)
+  for (int i = 0; i < CONNECTION_COUNT; ++i)
   {
     const int client_socket = accept(server_socket, NULL, 0);
     if (client_socket == -1)
     {
-      thread_safe_printf("main_server_thread(), client socket can't be accepted: %s\n", strerror(errno));
+      thread_safe_printf("main_server_thread(), client socket №%i can't be accepted: %s\n", i, strerror(errno));
       abort();
     }
-    thread_safe_printf("main_server_thread(), client socket has been accepted.\n");
+    thread_safe_printf("main_server_thread(), client socket №%i has been accepted.\n", i);
     
     // We try to start side server thread.
     {
@@ -173,9 +184,10 @@ void* main_server_thread(void* param)
       const int result = pthread_create(&side_server_thread_handles[i], NULL, side_server_thread, &(side_server_sockets[i]));
       if (result != 0)
       {
-        thread_safe_printf("main_server_thread(), pthread_create() has failed for side_server_thread_handles[i]: %i\n", result);
+        thread_safe_printf("main_server_thread(), pthread_create() has failed for side_server_thread_handles[%i]: %i\n", i, result);
         abort();
       }
+      thread_safe_printf("main_server_thread(), side server thread №%i has been started.\n.", i);
     }
   }
   
@@ -268,25 +280,27 @@ void* main_client_thread(void* param)
 {
   thread_safe_printf("main_client_thread() begins.\n");
   
+  sleep(5);
+
   for (int i = 0; i < CONNECTION_COUNT; ++i)
   {
     // We try to create client socket.
     side_client_sockets[i] = socket(AF_INET, SOCK_STREAM, 0);
     if (side_client_sockets[i] == -1)
     {
-      thread_safe_printf("main_client_thread(), client socket can't be created: %s\n", strerror(errno));
+      thread_safe_printf("main_client_thread(), client socket №%i can't be created: %s\n", i, strerror(errno));
       abort();
     }
-    thread_safe_printf("main_client_thread(), client socket has been created.\n");
+    thread_safe_printf("main_client_thread(), client socket №%i has been created.\n", i);
 
     // We try to set special socket options.
     const int option = 1;
     if (setsockopt(side_client_sockets[i], SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) == -1)
     {
-      thread_safe_printf("main_client_thread(), client socket can't reuse address: %s\n", strerror(errno));
+      thread_safe_printf("main_client_thread(), client socket №%i can't reuse address: %s\n", i, strerror(errno));
       abort();
     }
-    thread_safe_printf("main_client_thread(), client socket has reused address.\n");
+    thread_safe_printf("main_client_thread(), client socket №%i has reused address.\n", i);
 
     // We try to connect client socket to address.
     struct sockaddr_in client_address;
@@ -296,10 +310,10 @@ void* main_client_thread(void* param)
     client_address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     if (connect(side_client_sockets[i], (struct sockaddr*)&client_address, sizeof(client_address)) == -1)
     {
-      thread_safe_printf("main_client_thread(), client socket can't be connected: %s\n", strerror(errno));
+      thread_safe_printf("main_client_thread(), client socket №%i can't be connected: %s\n", i, strerror(errno));
       abort();
     }
-    thread_safe_printf("main_client_thread(), client socket has been connected.\n");
+    thread_safe_printf("main_client_thread(), client socket №%i has been connected.\n", i);
   
     // We try to start side client thread.
     {
@@ -309,6 +323,7 @@ void* main_client_thread(void* param)
         thread_safe_printf("main_client_thread(), pthread_create() has failed for side_client_thread_handle[%i].\n, i");
         abort();
       }
+      thread_safe_printf("main_client_thread(), side client thread №%i has been started.\n", i);
     }
   }
 
@@ -327,7 +342,42 @@ void* side_client_thread(void* param)
     abort();
   }
   
-  // ...
+  // We convert param to socket.
+  const int client_socket = *((int*)param);
+
+  // We send data to the server..
+  {
+    char buffer[DATA_SIZE];
+    int total_sent_size = 0;
+    
+    while (total_sent_size < DATA_SIZE)
+    {
+      // We choose random size for sending and check if the size is not bigger than the remains.
+      int random_size = rand() % DATA_SIZE + 1;
+      if (total_sent_size + random_size > DATA_SIZE)
+      {
+        random_size = DATA_SIZE - total_sent_size;
+      }
+
+      const int size = send(client_socket, buffer + total_sent_size, random_size, 0);
+
+      if (size == -1)
+      {
+        thread_safe_printf("side_client_thread(), send() has failed: %s\n", strerror(errno));
+        abort();
+      }
+
+      if (size == 0)
+      {
+        thread_safe_printf("side_client_thread(), connection has been closed: %s\n", strerror(errno));
+        abort();
+      }
+
+      thread_safe_printf("side_client_thread(), %i bytes has been sent.\n", size);
+
+      total_sent_size += size;
+    }
+  }
   
   thread_safe_printf("side_client_thread() ends.\n");
   
@@ -393,7 +443,7 @@ int main(int argc, char** argv)
     }
   }
 
-  // We try to hoin all side client threads for waiting them end;
+  // We try to join all side client threads for waiting them end;
   {
     for (size_t i = 0; i < CONNECTION_COUNT; ++i)
     {
@@ -405,11 +455,11 @@ int main(int argc, char** argv)
       }
     }
   }
-
-  thread_safe_printf("main() ends.\n");
   
   printf_mutex_fin();
-  
+
+  thread_safe_printf("main() ends.\n");
+
   return 0;
 }
 
