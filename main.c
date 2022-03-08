@@ -9,6 +9,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <stdarg.h>
+#include <stdbool.h>
 
 // TODO:
 // 1. Aplication has two main threads - server and client ones.
@@ -49,6 +50,8 @@ pthread_t side_client_thread_handles[CONNECTION_COUNT];
 pthread_cond_t server_wake_up_cv = PTHREAD_COND_INITIALIZER;
 // This is mutex for working with server_wake_up_cv.
 pthread_mutex_t server_wake_up_mutex;
+// This is flag for working with server_wake_up_cv.
+bool server_wake_up_flag = false;
 
 void printf_mutex_init()
 {
@@ -58,7 +61,7 @@ void printf_mutex_init()
   if (pthread_mutex_init(&print_mutex, NULL) == -1)
   {
     printf("printf_mutex_init(), pthread_mutex_init() has failed: %s\n", strerror(errno));
-    exit(EXIT_FAILURE);
+    abort();
   }
 
   printf("printf_mutex_init() ends.\n");
@@ -68,7 +71,12 @@ void server_wake_up_mutex_init()
 {
   thread_safe_printf("server_wake_up_mutex_init() begins.\n");
   
-  // ...
+  // We try to initialize mutex for server wake up condition variable.
+  if (pthread_mutex_init(&server_wake_up_mutex, NULL) == -1)
+  {
+    thread_safe_printf("server_wake_up_mutex_init(), pthread_mutex_init() has failed: %s\n", strerror(errno));
+    abort();
+  }
   
   thread_safe_printf("server_wake_up_mutex_init() ends.\n");
 }
@@ -77,7 +85,12 @@ void server_wake_up_mutex_fin()
 {
   thread_safe_printf("server_wake_up_mutex_fin() begins.\n");
   
-  // ...
+  // We try to destroy mutex for server wake up condition variable.
+  if (pthread_mutex_destroy(&server_wake_up_mutex) == -1)
+  {
+    thread_safe_printf("server_wake_up_mutex_fin() has failed: %s\n", strerror(errno));
+    abort();
+  }
   
   thread_safe_printf("server_wake_up_mutex_fin() ends.\n");
 }
@@ -166,6 +179,42 @@ void* main_server_thread(void* param)
     abort();
   }
   thread_safe_printf("main_server_thread(), server socket has been listened.\n");
+
+  // We notify  main client thread that server socket is ready.
+  {
+    // We try to lock the mutex.
+    {
+      const int result = pthread_mutex_lock(&server_wake_up_mutex);
+      if (result != 0)
+      {
+        thread_safe_printf("main_server_thread(), pthread_mutex_lock() has failed: %i\n", result);
+        abort();
+      }
+    }
+    
+    // We set the flag.
+    server_wake_up_flag = true;
+    
+    // We send the signal.
+    {
+      const int result = pthread_cond_signal(&server_wake_up_cv);
+      if (result != 0)
+      {
+        thread_safe_printf("main_server_thread(), pthread_cond_signal() has failed: %i\n", result);
+        abort();
+      }
+    }
+
+    // We try to unlock the mutex.
+    {
+      const int result = pthread_mutex_unlock(&server_wake_up_mutex);
+      if (result != 0)
+      {
+        thread_safe_printf("main_server_thread(), pthread_mutex_unlock() has failed: %i\n", result);
+        abort();
+      }
+    }
+  }
 
   // We accept all clients.
   for (int i = 0; i < CONNECTION_COUNT; ++i)
@@ -279,8 +328,55 @@ void* side_server_thread(void* param)
 void* main_client_thread(void* param)
 {
   thread_safe_printf("main_client_thread() begins.\n");
-  
-  sleep(5);
+
+  // We wait until the server socket notice us through server wake up condition variable.
+  {
+    bool loop = true;
+    while (loop)
+    {
+      // We try to lock the mutex.
+      {
+        const int result = pthread_mutex_lock(&server_wake_up_mutex);
+        if (result != 0)
+        {
+          thread_safe_printf("main_client_thread(), pthread_mutex_lock() has failed: %i\n", result);
+          abort();
+        }
+      }
+      
+      // We wait the signal and flag.
+      {
+        struct timespec delay;
+        delay.tv_sec = 1;
+        delay.tv_nsec = 0;
+
+        {
+          const int result = pthread_cond_timedwait(&server_wake_up_cv, &server_wake_up_mutex, &delay);
+          if ((result == 0) || (result == ETIMEDOUT))
+          {
+            // We check the flag.
+            if (server_wake_up_flag == true)
+            {   
+              loop = false;
+            }
+          } else {
+             thread_safe_printf("main_client_thread(), pthread_cond_wait() has failed: %i\n", result);
+             abort();
+          }
+        }
+
+        // We try to unlock the mutex.
+        {
+          const int result = pthread_mutex_unlock(&server_wake_up_mutex);
+          if (result != 0)
+          {
+            thread_safe_printf("main_client_thread(), pthread_mutex_unlock() has failed: %i\n", result);
+            abort();
+          }
+        }
+      }
+    }
+  }
 
   for (int i = 0; i < CONNECTION_COUNT; ++i)
   {
@@ -390,6 +486,8 @@ int main(int argc, char** argv)
   
   printf_mutex_init();
   
+  server_wake_up_mutex_init();
+  
   // We try to run main server thread.
   {
     const int result = pthread_create(&main_server_thread_handle, NULL, main_server_thread, NULL);
@@ -456,184 +554,11 @@ int main(int argc, char** argv)
     }
   }
   
+  server_wake_up_mutex_fin();
+  
   printf_mutex_fin();
 
-  thread_safe_printf("main() ends.\n");
+  printf("main() ends.\n");
 
   return 0;
-}
-
-void run_server_mode()
-{
-  printf("Server mode begins.\n");
-  
-  // Try to create server socket.
-  const int server_socket = socket(AF_INET, SOCK_STREAM, 0);
-  if (server_socket == -1)
-  {
-    printf("Server socket can't be created: %s\n", strerror(errno));
-    return;
-  }
-  printf("Server socket has been created.\n");
-
-  // Try to set special socket options.
-  const int option = 1;
-  if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) == -1)
-  {
-    printf("Server socket can't reuse address: %s\n", strerror(errno));
-    close(server_socket);
-    return;
-  }
-
-  // Try to bind server socket to address.
-  struct sockaddr_in server_address;
-  server_address.sin_family = AF_INET;
-  server_address.sin_port = htons(PORT);
-  server_address.sin_addr.s_addr = htonl(INADDR_ANY);
-  if (bind(server_socket, (struct sockaddr*)&server_address, sizeof(server_address)) != 0)
-  {
-    printf("Server socket can't be bound: %s\n", strerror(errno));
-    close(server_socket);
-    return;
-  }
-  printf("Server socket has been bound.\n");
-
-  // Try to listen server socket.
-  if (listen(server_socket, 10) != 0)
-  {
-    printf("Server socket can't be listened: %s\n", strerror(errno));
-    close(server_socket);
-    return;
-  }
-  printf("Server socket has been listened.\n");
-
-  // Try to accept client socket.
-  while (1)
-  {   
-    const int client_socket = accept(server_socket, NULL, 0);
-    if (client_socket == -1)
-    {
-      printf("Client socket can't be accepted: %s\n", strerror(errno));
-      continue;
-    }
-    printf("Client socket has been accepted.\n");
-    
-    // Try to receive data from client socket.
-    char buffer[256];
-    int total = 0;
-    
-    while (total < sizeof(buffer))
-    {
-      const int size = recv(client_socket, buffer + total, sizeof(buffer) - total, 0);
-    
-      if (size == 0)
-      {
-        printf("Client socket. Connection has been closed.\n");
-        close(client_socket);
-        break;
-      }
-
-      if (size == -1)
-      {
-        printf("Client socket. Error has occurred: %s", strerror(errno));
-        close(client_socket);
-        break;
-      }
-
-      printf("%i bytes have been recieved.\n", size);
-
-      // Print gotten data.
-      for (int i = total; i < total + size; ++i)
-      {
-        printf("%c", buffer[i]);
-      }
-      printf("\n");
-      
-      // We don't really check possible integer overflow.
-      total += size;
-      if (total > sizeof(buffer))
-      {
-        printf("Client socket. Size of gotten data is too big.\n");
-        close(client_socket);
-        break;
-      }
-    }
-
-    close(client_socket);
-  }
-  
-  close(server_socket);
-  printf("Server mode ends.");
-}
-
-void run_client_mode()
-{
-  printf("Client mode begins.\n");
-
-  // Try to create client socket.
-  const int client_socket = socket(AF_INET, SOCK_STREAM, 0);
-  if (client_socket == -1)
-  {
-    printf("Client socket can't be created: %s\n", strerror(errno));
-    return;
-  }
-  printf("Client socket has been created.\n");
-
-  // Try to set special socket options.
-  const int option = 1;
-  if (setsockopt(client_socket, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) == -1)
-  {
-    printf("Client socket can't reuse address: %s\n", strerror(errno));
-    close(client_socket);
-    return;
-  }
-
-  // Try to connect client socket to address.
-  struct sockaddr_in client_address;
-  client_address.sin_family = AF_INET;
-  client_address.sin_port = htons(PORT);
-  // We don't really check result of this call.
-  //inet_aton(IP, (struct in_addr*)&client_address.sin_addr.s_addr);
-  client_address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  if (connect(client_socket, (struct sockaddr*)&client_address, sizeof(client_address)) == -1)
-  {
-    printf("Client socket can't be connected: %s\n", strerror(errno));
-    close(client_socket);
-    return;
-  }
-  printf("Client socket has been connected.\n");
-
-  // Try to send data to server.
-  char buffer[256];
-  int total = 0;
-  // Fill the buffer with data.
-  for (size_t i = 0; i < sizeof(buffer); ++i)
-  {
-    buffer[i] = i;
-  }
-
-  // Send data.
-  while (total < sizeof(buffer))
-  {
-    const int size = send(client_socket, buffer + total, sizeof(buffer) - total, 0);
-    
-    if (size == 0)
-    {
-      printf("Connection has been closed: %s\n", strerror(errno));
-      break;
-    }
-
-    if (size == -1)
-    {
-      printf("Error has occured: %s\n", strerror(errno));
-      close(client_socket);
-      break;
-    }
-
-    printf("%i bytes have been sent.\n", size);
-    total += size;
-  }
-
-  close(client_socket);
-  printf("Client mode ends.\n");
 }
