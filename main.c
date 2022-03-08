@@ -29,7 +29,8 @@ void thread_safe_printf(const char*const str, ...);
 
 #define PORT 12345
 #define CONNECTION_COUNT 100
-#define DATA_SIZE 1000
+#define DATA_SIZE 100000
+#define MAX_CHUNK_SIZE 1000
 
 // This is mutex for thread safe printf function.
 pthread_mutex_t print_mutex;
@@ -294,7 +295,7 @@ void* side_server_thread(void* param)
     while (total_sent_size < DATA_SIZE)
     {
       // We choose random size for sending and check if the size is not bigger than the remains.
-      int random_size = rand() % DATA_SIZE + 1;
+      int random_size = rand() % MAX_CHUNK_SIZE + 1;
       if (total_sent_size + random_size > DATA_SIZE)
       {
         random_size = DATA_SIZE - total_sent_size;
@@ -441,15 +442,21 @@ void* side_client_thread(void* param)
   // We convert param to socket.
   const int client_socket = *((int*)param);
 
-  // We send data to the server..
+  // We send all data to the server.
   {
     char buffer[DATA_SIZE];
     int total_sent_size = 0;
+
+    // We fill all data with concrete values.
+    for (int i = 0; i < DATA_SIZE; ++i)
+    {
+      buffer[i] = i;
+    }
     
     while (total_sent_size < DATA_SIZE)
     {
       // We choose random size for sending and check if the size is not bigger than the remains.
-      int random_size = rand() % DATA_SIZE + 1;
+      int random_size = rand() % MAX_CHUNK_SIZE + 1;
       if (total_sent_size + random_size > DATA_SIZE)
       {
         random_size = DATA_SIZE - total_sent_size;
@@ -469,9 +476,48 @@ void* side_client_thread(void* param)
         abort();
       }
 
-      thread_safe_printf("side_client_thread(), %i bytes has been sent.\n", size);
+      thread_safe_printf("side_client_thread(), %i bytes have been sent.\n", size);
 
       total_sent_size += size;
+    }
+  }
+
+  // We take all data from the server.
+  {
+    char buffer[DATA_SIZE];
+    int total_received_size = 0;
+    
+    while (total_received_size < DATA_SIZE)
+    {
+      const int size = recv(client_socket, buffer + total_received_size, DATA_SIZE - total_received_size, 0);
+      
+      if (size == -1)
+      {
+        thread_safe_printf("side_client_thread(), recv() has failed: %s\n", strerror(errno));
+        abort();
+      }
+      
+      if (size == 0)
+      {
+        thread_safe_printf("side_client_thread(), connection has been closed: %s\n", strerror(errno));
+        abort();
+      }
+      
+      thread_safe_printf("side_client_thread(), %i bytes have been received.\n", size);
+      
+      total_received_size += size;
+    }
+  
+    // We check all data.
+    {
+      for (int i = 0; i < DATA_SIZE; ++i)
+      {
+        if (buffer[i] != (char)i)
+        {
+          thread_safe_printf("side_client_thread(), %i byte has wrong value.\n", i);
+          abort();
+        }
+      }
     }
   }
   
