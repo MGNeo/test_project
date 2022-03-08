@@ -15,7 +15,7 @@
 // 1. Aplication has two main threads - server and client ones.
 // 2. Main server thread accepts clients and passes each of them to personal side server thread for processing.
 // 3. Main client thread connects clients and passes each of them to a personal side client thread for processing.
-// 4. There are 1000 connections.
+// 4. There are 100 connections.
 // 5. Each connection is sending 1000 bytes at first from client to server and then from server to client again, the data must not be different.
 // 6. All sockets use block mode.
 // 7. All data is sent by random sized chunks.
@@ -360,7 +360,7 @@ void* main_client_thread(void* param)
               loop = false;
             }
           } else {
-             thread_safe_printf("main_client_thread(), pthread_cond_wait() has failed: %i\n", result);
+             thread_safe_printf("main_client_thread(), pthread_cond_timedwait() has failed: %i\n", result);
              abort();
           }
         }
