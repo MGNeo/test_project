@@ -508,7 +508,7 @@ int main(int argc, char** argv)
     }
   }
   
-  // We try to join main server thread for waiting its end.
+  // We try to join main server thread for waiting its ends.
   {
     const int result = pthread_join(main_server_thread_handle, NULL);
     if (result != 0)
@@ -518,7 +518,7 @@ int main(int argc, char** argv)
     }
   }
   
-  // We try to join main client thread for waiting its end.
+  // We try to join main client thread for waiting its ends.
   {
     const int result = pthread_join(main_client_thread_handle, NULL);
     if (result != 0)
