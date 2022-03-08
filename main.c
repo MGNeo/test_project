@@ -12,7 +12,7 @@
 #include <stdbool.h>
 
 // TODO:
-// 1. Aplication has two main threads - server and client ones.
+// 1. Application has two main threads - server and client ones.
 // 2. Main server thread accepts clients and passes each of them to personal side server thread for processing.
 // 3. Main client thread connects clients and passes each of them to a personal side client thread for processing.
 // 4. There are 100 connections.
